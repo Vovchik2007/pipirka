@@ -1,0 +1,79 @@
+name: Build Nocturne Stonebound
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Extract source archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f Nocturne_Stonebound_Forge_Source.zip
+          unzip -q Nocturne_Stonebound_Forge_Source.zip -d extracted
+          project_dir="extracted/Nocturne_Stonebound_1.20.1_Forge"
+          test -f "$project_dir/build.gradle"
+          test -f "$project_dir/src/main/resources/pack.mcmeta"
+          echo "PROJECT_DIR=$project_dir" >> "$GITHUB_ENV"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.8'
+
+      - name: Build mod
+        run: gradle --no-daemon clean build
+        working-directory: ${{ env.PROJECT_DIR }}
+
+      - name: Verify JAR resources and JSON
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t jars < <(find build/libs -maxdepth 1 -type f -name 'nocturne-*.jar' ! -name '*-sources.jar' ! -name '*-javadoc.jar')
+          test "${#jars[@]}" -eq 1
+          jar_file="${jars[0]}"
+          for resource in \
+            META-INF/mods.toml \
+            pack.mcmeta \
+            assets/nocturne/geo/nocturn.geo.json \
+            assets/nocturne/animations/nocturn.animation.json \
+            assets/nocturne/textures/entity/nocturn.png \
+            assets/nocturne/models/item/nocturn_spawn_egg.json \
+            data/nocturne/forge/biome_modifier/nocturn_spawns.json; do
+            jar tf "$jar_file" | grep -Fxq "$resource" || { echo "Missing JAR resource: $resource"; exit 1; }
+          done
+          mkdir -p build/verify
+          (cd build/verify && jar xf "../../$jar_file" assets/nocturne/geo/nocturn.geo.json assets/nocturne/animations/nocturn.animation.json data/nocturne/forge/biome_modifier/nocturn_spawns.json pack.mcmeta)
+          python - <<'PYJSON'
+          import json
+          from pathlib import Path
+          root = Path('build/verify')
+          for f in [root/'assets/nocturne/geo/nocturn.geo.json', root/'assets/nocturne/animations/nocturn.animation.json', root/'data/nocturne/forge/biome_modifier/nocturn_spawns.json', root/'pack.mcmeta']:
+              json.loads(f.read_text(encoding='utf-8'))
+          print('JAR resource JSON checks passed')
+          PYJSON
+          sha256sum "$jar_file" > build/libs/SHA256SUMS
+          echo "Verified JAR: $jar_file"
+        working-directory: ${{ env.PROJECT_DIR }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Nocturne-Stonebound-Forge-1.20.1
+          path: |
+            ${{ env.PROJECT_DIR }}/build/libs/nocturne-*.jar
+            ${{ env.PROJECT_DIR }}/build/libs/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 14
