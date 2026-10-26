@@ -1,0 +1,44 @@
+
+name: Build Nocturne Stonebound
+
+on:
+  push:
+    paths:
+      - 'Nocturne_Stonebound_Forge_Source.zip'
+      - '.github/workflows/build-from-archive.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Extract source
+        run: |
+          mkdir source
+          unzip -q Nocturne_Stonebound_Forge_Source.zip -d source
+          GRADLEW="$(find source -type f -name gradlew -print -quit)"
+          test -n "$GRADLEW"
+          echo "PROJECT_DIR=$(dirname "$GRADLEW")" >> "$GITHUB_ENV"
+          chmod +x "$GRADLEW"
+
+      - name: Build mod
+        run: |
+          cd "$PROJECT_DIR"
+          ./gradlew --no-daemon build
+
+      - name: Upload JAR
+        uses: actions/upload-artifact@v4
+        with:
+          name: Nocturne-Stonebound-Forge-1.20.1
+          path: source/**/build/libs/*.jar
+          if-no-files-found: error
